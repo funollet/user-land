@@ -6,6 +6,10 @@
 #
 # Jordi Funollet <jordi.f@ati.es>  Mon, 09 Jan 2006 16:35:01 +0100
 
+"""Uploads files to a 23hq.com account. Authentication data must be
+on a configuration file (Frob not yet implemented).
+"""
+
 # CHANGELOG
 #
 # Mon Oct 20 18:21:40 CEST 2008
@@ -25,60 +29,44 @@
 
 
 
-import pycurl, urllib, ConfigParser, os, commands, re
-
-SITE='http://www.23hq.com'
-CFGFILE='~/.upload23'
-
-#TODO: pending unittesting!!! 
-
-def load_conf ():
-    fileconf = os.path.normpath (os.path.expanduser(CFGFILE))
-    c = ConfigParser.ConfigParser()
-    c.read (fileconf)
-    cfg = {}
-    for section in c.sections() :
-        cfg[section] = c.items(section)
-    return cfg
+import logging
+from optparse import OptionParser
+import pycurl
+import urllib
+import urlparse
+import ConfigParser
+import re
+import os
+# TODO: use subprocess
+import commands
 
 
-def file_existant (*path_chunks):
-    """Builds a full path from chunks. Verify file existence.
+SITE = 'http://www.23hq.com'
+CFGFILE = '~/.upload23'
 
-    Path is user-expanded.
-    
-    *path_chunks: strings with parts of path to be build.
-    """
-    joined = os.path.join (*path_chunks)
-    xpanded = os.path.expanduser(joined)
-    #TODO: handle exception; show informative message
-    #TODO: OSError? is this the most convenient exception?
-    # Raise OSError if file not found.
-    st = os.stat (xpanded)
-    return xpanded
-         
 
-            
+
 class Account23:
     """Operates with a 23hq.com account.
     """
+    #TODO: auth with frob.
     
-    def __init__ (self, auth_tuples):
+    def __init__ (self, auth_tuples, site=SITE):
         """Initials settings for the account. Receives list of tuples
         with params for authentication.
         """
+        
         self.auth = auth_tuples
+        self.site = site
+        self.url_upload = urlparse.urljoin(self.site, '/services/upload/')
         # XML strings returned on each POSTed file.
         self.contents = ''
-        #TODO: Generate post_fields (more) dinamicaly.
+        logging.debug("Account manager instantiated.")
+        
 
-    def __curl_body_callback (self, buff):
-        """Puts XML returned by each POST to self.contents."""
-        self.contents = self.contents + buff
-                
-                
-    def uploaded_ids (self):
-        """List of photoIDs uploaded."""
+    def __get_uploaded_ids (self):
+        """List of uploaded photoIDs.
+        """
         
         pattern = r'''<photoid>(.\d*)</photoid>'''
         regex = re.compile (pattern)
@@ -86,73 +74,173 @@ class Account23:
 
 
     def edit_uploaded (self):
-        """Redirect to Firefox for editing uploaded files."""
-
-        ids_csv = ','.join (self.uploaded_ids())
-        url = SITE + '/tools/uploader_edit.gne?ids=' + ids_csv
+        """Redirect to Firefox for editing uploaded files.
+        """
+        # ToDo: not working when called from Digikam (works on command-line).
+        logging.debug('calling Firefox to edit uploaded files')
+        
+        ids_csv = ','.join(self.__get_uploaded_ids())
+        url = urlparse.urljoin(self.site, '/tools/uploader_edit.gne?ids=%s' \
+            % ids_csv)
         cmd = '''firefox -remote "openurl(%s)"''' % url 
-        (n,s) = commands.getstatusoutput (cmd)
+        (_, _) = commands.getstatusoutput (cmd)
 
-        
-    def upload (self, *args):
-        """Upload an image to 23hq.com. Default method."""
-        self.services_upload (*args)
-        
-
-    def services_upload (self, fname):
-        """Sends an image to 23hq.com POSTing to /services/upload/."""
-
-        url = SITE + '/services/upload/'
-        
-        try:
-            photo = file_existant (fname)
-        except OSError:
-            raise Exception('%s: file not found' % fname)
-
-        postfields = self.auth + \
-            [ ('photo', (pycurl.FORM_FILE, photo)) ] 
-        
-        c = pycurl.Curl()
-        #c.setopt (c.VERBOSE, 1)    # just for debugging
-        c.setopt (c.URL, url)
-        c.setopt (c.HTTPPOST, postfields)
-        # Don't print on stdout.
-        c.setopt (c.WRITEFUNCTION, self.__curl_body_callback)
-        c.perform()
-        c.close()
-
-     
-def nautilus_or_cmdline ():
-    """Returns files passed from Nautilus. If not invoked from Nautilus or
-    no files passed, returns command-line arguments.
-    """
     
-    # Invoked from Nautilus?
-    if os.environ.has_key ('NAUTILUS_SCRIPT_SELECTED_URIS'):
-        def uri2path (uri):
-            """Converts URI to local file-path."""
-            # Remove 'file://' and unquote '%xx' chars.
-            return urllib.unquote(uri)[7:]       
-
-        # Nautilus passes files as one-per-line url-encoded.
-        uris = os.environ['NAUTILUS_SCRIPT_SELECTED_URIS'].split('\n')
-        paths = [uri2path(u) for u in uris]
-    else:
-        # Filenames from command-line.
-        paths = os.sys.argv[1:]
+    def upload (self, fname):
+        """Sends an image to 23hq.com POSTing to /services/upload/.
+        """
+        fname = os.path.abspath(os.path.expanduser(fname))
         
-    return paths
+        # ToDo: proxy detection fails; Digikam calls it with a clean environment?
+        #if os.environ.has_key('http_proxy'):
+            #proxy = os.environ['http_proxy']
+        proxy = 'http://proxy.upf.es:8080'
+        #proxy = ''
+        
+        logging.debug("Account23.upload() has been called")
+        if os.path.exists(fname):
+            logging.debug("configuring curl to upload '%s'" % fname)
+            postfields = self.auth + \
+                [ ('photo', (pycurl.FORM_FILE, fname)) ] 
+        
+            curl = pycurl.Curl()
+            #curl.setopt (curl.VERBOSE, 1)    # just for debugging
+            if proxy:
+                curl.setopt(pycurl.PROXY, proxy)
+                curl.setopt(pycurl.NOSIGNAL, 1)
+                logging.debug("Proxy set to %s" % proxy)
+            curl.setopt (curl.URL, self.url_upload)
+            curl.setopt (curl.HTTPPOST, postfields)
+            # Don't print on stdout.
+            curl.setopt (curl.WRITEFUNCTION, self.__curl_body_callback)
+            logging.debug("starting upload with curl...")
+            curl.perform()
+            curl.close()
+            logging.debug("...upload with curl finished")
+        else:
+            logging.error('File not found: %s' % fname)
+
+
+    def __curl_body_callback (self, buff):
+        """Store in self.contents XML returned by each POST.
+        """
+        self.contents = self.contents + buff
+                
+
+##########################################################
+
+#def encode_multipart_formdata(fields, files):
+    #"""Return (content_type, body) ready for httplib.HTTP instance
+
+    #@fields:    sequence of (name, value) elements for regular form fields.
+    #@files:     sequence of (name, filename, value) elements for data 
+    #                    to be uploaded as files
+    #"""
+
+    #import mimetools
+    #import mimetypes
+
+    #boundary =  mimetools.choose_boundary()
+
+    #body = []
+
+    #for (key, value) in fields:
+        #body += '--%s' % boundary
+        #body += 'Content-Disposition: form-data; name="%s"' % key
+        #body += value
+
+    #for (key, filename, value) in files:
+        ##base64.encode(open(FILE, "rb"), file)
+        #body += '--%s' % boundary
+        #body += 'Content-Disposition: form-data; name="%s"; filename="%s"' \
+            #% (key, filename)
+        #body += 'Content-Type: %s' % get_content_type(filename)
+        #body += value
+
+    #body += '''--%s--''' % boundary
+
+    #content_type = 'multipart/form-data; boundary=%s' % boundary
+    #return content_type, body
+
+#def get_content_type(filename):
+    #return mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+
+##########################################################
+
+
+def load_conf (cfg_fname=CFGFILE):
+    """Returns dict of sections. Has a list of tuples (key, value).
+
+    Usage:
+        cfg['auth']['password']
+    """
+    fileconf = os.path.abspath(os.path.expanduser(cfg_fname))
+    parser = ConfigParser.ConfigParser()
+    parser.read(fileconf)
+
+    cfg = [(section, parser.items(section)) for section in parser.sections()]
+    return dict(cfg)
+
+
+def is_nautilus_invoked():
+    """True if the script has been invoked from Nautilus.
+    """
+    return os.environ.has_key ('NAUTILUS_SCRIPT_SELECTED_URIS')
+
+
+def get_nautilus_files():
+    """Returns files passed from Nautilus.
+    """
+    # Nautilus passes files as one-per-line url-encoded.
+    uris = os.environ['NAUTILUS_SCRIPT_SELECTED_URIS'].split('\n')
+    # Remove 'file://' and unquote '%xx' chars.
+    return [urllib.unquote(uri)[7:] for uri in uris]
+
 
 
 def main():
+    """Read command-line, parse config. file, 
+    """
+    
+    # Parse command-line.
+    usage = """usage: %prog [options]"""
+    parser = OptionParser(usage=usage)
+    
+    parser.add_option("-d", "--debug", action="store_true",
+                      help="set DEBUG loglevel")
+    parser.add_option("-n", "--noact", action="store_true",
+                      help="do nothing, just show")
+    
+    options, args = parser.parse_args()
+
+    # Set debug level.
+    if options.debug:
+        #logging.basicConfig(level=logging.DEBUG)
+        logging.basicConfig(level=logging.DEBUG, filename='/tmp/upload23.out')
+    else:
+        logging.basicConfig(level=logging.INFO)
+
     cfg = load_conf()
-    #TODO: auth with frob.
-    my23 = Account23 (cfg['auth'])
+    logging.debug('Config read.\n\t%s' % cfg['auth'])
 
-    for fname in nautilus_or_cmdline():
-        my23.upload (fname)
+    if is_nautilus_invoked():
+        filenames = get_nautilus_files()
+    else:
+        filenames = args
+    logging.debug('Filenames to upload: %s' % filenames)
+    #filenames = nautilus_or_cmdline()
+    
+    account23 = Account23 (cfg['auth'])
+    
+    for fname in filenames:
+        logging.debug('uploading %s' % fname)
+        if not options.noact:
+            account23.upload (fname)
+    # Show the uploaded_files page in Firefox.
+    if filenames:
+        if not options.noact:
+            account23.edit_uploaded()
 
-    my23.edit_uploaded()
 
 if __name__ == '__main__':
     print """Warning: this script is abandoned. You can have similiar
