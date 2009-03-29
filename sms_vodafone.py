@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 # sms_vodafone
 
+"""This script is unmaintained.
+"""
+
 import pycurl
-import tempfile
 import StringIO
 import logging
 import os
@@ -24,25 +26,66 @@ def load_conf (cfg_fname=CFGFILE):
     return dict(cfg)
 
 
-class CurlShareCookies:
-    """Instance of pycurl.Curl() that does several POSTs sharing cookies.
-    """
+#class CurlShareCookies:
+#    """Instance of pycurl.Curl() that does several POSTs sharing cookies.
+#    """
+#    
+#    def __init__(self, cookiejar):
+#        
+#        # Filename of the cookiejar.
+#        self.cookiejar = cookiejar
+#
+#        # String-like object to "hide" curl's output. Used as /dev/null.
+#        self.body = StringIO.StringIO()
+#        
+#        self.curl = pycurl.Curl()
+#        # Option -b/--cookie <name=string/file>
+#        # Note: must be a string, not a file object.
+#        self.curl.setopt(pycurl.COOKIEFILE, self.cookiejar)
+#        # Option -c/--cookie-jar <file>
+#        # Note: must be a string, not a file object.
+#        self.curl.setopt(pycurl.COOKIEJAR, self.cookiejar)
+#
+#
+#    def post(self, url, postfields, verbose=True):
+#        """Sends a POST using pycurl.
+#        
+#        @url:        url for pycurl.Curl
+#        @postfields: postfields for pycurl.Curl    
+#        @verbose:    if True, shows HTML on stdout (default: True)
+#        """
+#        
+#        self.curl.setopt(pycurl.URL, url)
+#        self.curl.setopt(pycurl.HTTPPOST, postfields)
+#
+#        if verbose:
+#            self.curl.setopt (pycurl.VERBOSE, 1)    # just for debugging
+#        else:
+#            self.curl.setopt (pycurl.VERBOSE, 0)    # be quiet
+#            self.curl.setopt(pycurl.WRITEFUNCTION, self.body.write)
+#            self.curl.setopt(pycurl.HEADERFUNCTION, self.body.write)
+#
+#        self.curl.perform()
+#        self.curl.close()
+
+
+
+class Vodafone:
     
-    def __init__(self, cookiejar):
-        
-        # Filename of the cookiejar.
-        self.cookiejar = cookiejar
+    def __init__(self):
 
         # String-like object to "hide" curl's output. Used as /dev/null.
         self.body = StringIO.StringIO()
         
+        # Create the curl object.
         self.curl = pycurl.Curl()
-        # Option -b/--cookie <name=string/file>
-        # Note: must be a string, not a file object.
-        self.curl.setopt(pycurl.COOKIEFILE, self.cookiejar)
-        # Option -c/--cookie-jar <file>
-        # Note: must be a string, not a file object.
-        self.curl.setopt(pycurl.COOKIEJAR, self.cookiejar)
+
+        # Store the cookies trasparently.
+        self.share = pycurl.CurlShare()
+        self.share.setopt(pycurl.SH_SHARE, pycurl.LOCK_DATA_COOKIE)
+        self.share.setopt(pycurl.SH_SHARE, pycurl.LOCK_DATA_DNS)
+
+        self.curl.setopt(pycurl.SHARE, self.share)
 
 
     def post(self, url, postfields, verbose=True):
@@ -64,14 +107,25 @@ class CurlShareCookies:
             self.curl.setopt(pycurl.HEADERFUNCTION, self.body.write)
 
         self.curl.perform()
+
+
+    def get(self, url, verbose=True):
+        self.curl.setopt(pycurl.URL, url)
+        self.curl.setopt(pycurl.HTTPGET, 1)
+        
+        
+        if verbose:
+            self.curl.setopt (pycurl.VERBOSE, 1)    # just for debugging
+        else:
+            self.curl.setopt (pycurl.VERBOSE, 0)    # be quiet
+            self.curl.setopt(pycurl.WRITEFUNCTION, self.body.write)
+            self.curl.setopt(pycurl.HEADERFUNCTION, self.body.write)
+
+        self.curl.perform()
+
+
+    def close(self):
         self.curl.close()
-
-
-
-class Vodafone:
-    
-    def __init__(self, cookie_fname):
-        self.cookiejar = cookie_fname
 
 
     def login_mivodafone(self, msisdn, password):
@@ -82,6 +136,7 @@ class Vodafone:
         """
         
         logging.debug('entering Vodafone.login_mivodafone()')
+
         url = "https://canalonline.vodafone.es/cpar/do/login/query"
         #url = "https://grandescuentas.vodafone.es/cwgc/directLogin.jsp"
         postfields = [ 
@@ -91,8 +146,12 @@ class Vodafone:
             ("pwd", password),
             ]
 
-        self.curl = CurlShareCookies(self.cookiejar)
-        self.curl.post(url, postfields)
+        self.post(url, postfields, verbose=False)
+
+        logging.debug('running GET at mivodafone home')
+        
+        url = "https://canalonline.vodafone.es/cpar/do/home/load"
+        self.get(url)
 
 
     def login_albumsms(self):
@@ -100,16 +159,17 @@ class Vodafone:
         """
 
         logging.debug('entering Vodafone.login_albumsms()')
+
         #-d action="accessSMS"
         #"https://online.vodafone.es/albumsms/ContEntrada?mensaje=${MSISDN}&id_session=${ID_SESSION}&firma="
         #url = "https://online.vodafone.es/albumsms/ContEntrada?mensaje=%s&id_session=%s&firma=" % (MSISDN, ID_SESSION)
-        url = 'https://online.vodafone.es/albumsms/ContEntrada?mensaje=600859815&id_session=NCO1D1621DB61FAF9E7608D8DBD8CEF7181&firma='
+        url = 'https://canalonline.vodafone.es/cpar/do/sms/info'
         postfields = [
             ("action", "accessSMS"),
+            ("url", "https://online.vodafone.es/albumsms/ContEntrada?mensaje=600859815&id_session=NCO8618367667AAAEA6248795B22A1FAE3C&firma=")
             ]
 
-        self.curl = CurlShareCookies(self.cookiejar)
-        self.curl.post(url, postfields)
+        self.post(url, postfields, verbose=False)
 
 
     def send_sms (self):
@@ -130,8 +190,7 @@ class Vodafone:
             ("smsTxt", "hola caracola"),
         ]
 
-        self.curl = CurlShareCookies(self.cookiejar)
-        self.curl.post(url, postfields)
+        self.post(url, postfields, verbose=False)
 
 
 def main():
@@ -149,16 +208,11 @@ def main():
     msisdn = cfg['auth']['msisdn']
     password = cfg['auth']['password']
 
-    # Temporal file for storing cookies.
-    cookies = tempfile.mktemp()
-    
-    vodaf = Vodafone(cookies)
+    vodaf = Vodafone()
     vodaf.login_mivodafone(msisdn, password)
-    vodaf.login_albumsms()
-    vodaf.send_sms()
-    
-    # Remove stored cookies.
-    os.remove(cookies)
+    #vodaf.login_albumsms()
+    #vodaf.send_sms()
+    vodaf.close()
     
     
 if __name__ == '__main__':
