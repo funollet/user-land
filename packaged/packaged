@@ -1,0 +1,32 @@
+#!/bin/bash
+# packaged
+#
+# Search packages across multiple package managers
+
+_dnf() {
+  dnf makecache >/dev/null 2>&1
+  dnf --cacheonly list "*$1*" 2>/dev/null | rg -v '^Available packages$'
+}
+
+_flatpak() {
+  flatpak search $1 | rg -v '^No matches found$'
+}
+
+_mise() {
+  mise plugins ls-remote | rg $1
+}
+
+_aqua() {
+  local url
+  url="https://raw.githubusercontent.com/aquaproj/aqua-registry/refs/heads/main/registry.yaml"
+  curl -s "$url" | yq '.packages[].repo_name' | rg "$1"
+}
+
+echo '### dnf:'
+_dnf $1
+echo '### flatpak:'
+_flatpak $1
+echo '### mise:'
+_mise $1
+echo '### aqua:'
+_aqua $1
