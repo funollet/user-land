@@ -3,8 +3,14 @@
 #
 # Search packages across multiple package managers
 
+which "gum" &>/dev/null \
+  || (
+    echo 'Please install gum [https://github.com/charmbracelet/gum]'
+    exit 1
+  )
+
 _dnf() {
-  dnf makecache >/dev/null 2>&1
+  sudo dnf makecache >/dev/null 2>&1
   dnf --cacheonly list "*$1*" 2>/dev/null | rg -v '^Available packages$'
 }
 
@@ -22,11 +28,7 @@ _aqua() {
   curl -s "$url" | yq '.packages[].repo_name' | rg "$1"
 }
 
-echo '### dnf:'
-_dnf $1
-echo '### flatpak:'
-_flatpak $1
-echo '### mise:'
-_mise $1
-echo '### aqua:'
-_aqua $1
+for backend in dnf flatpak mise aqua; do
+  gum format -- "## ${backend}:"
+  _${backend} $1
+done
